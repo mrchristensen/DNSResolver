@@ -1,8 +1,9 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdio.h>
-#include <string.h>
+#include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -271,6 +272,31 @@ int rr_to_wire(dns_rr rr, unsigned char *wire, int query_only)
 	 * OUTPUT: the length of the wire-formatted resource record.
 	 *
 	 */
+
+	int wirelen = 0;
+
+	if (query_only == TRUE)
+	{
+		*wire = *((unsigned char *)&rr.class);
+		wire++;
+		wirelen++;
+		*wire = *((unsigned char *)&rr.class + 1);
+		wire++;
+		wirelen++;
+
+		*wire = *((unsigned char *)&rr.type);
+		wire++;
+		wirelen++;
+		*wire = *((unsigned char *)&rr.type + 1);
+		wire++;
+		wirelen++;
+	}
+	else
+	{
+		fprintf(stderr, "rr_to_wire() on not query only");
+	}
+
+	return wirelen;
 }
 
 unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *wire)
@@ -299,14 +325,20 @@ unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *w
 	wirelen++;
 
 	//Flags: Each bit represents a flag or code (not important for this lab, can be hardcoded)
-	*wire = FLAGS;
-	wire += sizeof(FLAGS);
-	wirelen += sizeof(FLAGS);
+	*wire = *((unsigned char *)&FLAGS);
+	wire++;
+	wirelen++;
+	*wire = *((unsigned char *)&FLAGS + 1);
+	wire++;
+	wirelen++;
 
 	//Number of questions
-	*wire = NUM_QUESTIONS;
-	wire += sizeof(NUM_QUESTIONS);
-	wirelen += sizeof(NUM_QUESTIONS);
+	*wire = *((unsigned char *)&NUM_QUESTIONS);
+	wire++;
+	wirelen++;
+	*wire = *((unsigned char *)&NUM_QUESTIONS + 1);
+	wire++;
+	wirelen++;
 
 	//Number of Answer Resource Records (RR): 0
 	for (int i = 0; i < NUM_BYTES_OF_ANSWER_RR; i++)
@@ -373,15 +405,64 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 	 *             response should be received
 	 * OUTPUT: the size (bytes) of the response received
 	 */
+	int sockfd;
+
+	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	{
+		fprintf(stderr, "Socket failed to be created");
+		exit(EXIT_FAILURE);
+	}
+
+	struct sockaddr_in servaddr;
+	bzero(&servaddr, sizeof(servaddr));
+	servaddr.sin_addr.s_addr = inet_addr(server);
+	servaddr.sin_port = htons(port);
+	servaddr.sin_family = AF_INET;
+
+	if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
+	{
+		fprintf(stderr, "Socket could not connect");
+		exit(EXIT_FAILURE);
+	}
+
+	int writelen = write(sockfd, request, requestlen);
+	if (writelen != requestlen)
+	{
+		fprintf(stderr, "Socket could not write completly");
+		exit(EXIT_FAILURE);
+	}
+
+	int readlen = read(sockfd, response, MAX_WIRE_LENGTH);
+	if (readlen < 0)
+	{
+		fprintf(stderr, "Socket could not read");
+		exit(EXIT_FAILURE);
+	}
+
+	return readlen;
 }
 
 dns_answer_entry *resolve(char *qname, char *server, char *port)
 {
-	unsigned char wire[MAX_WIRE_LENGTH];
+	unsigned char request_wire[MAX_WIRE_LENGTH];
 
-	int wirelen = create_dns_query(qname, TYPE, wire);
+	printf("Request wire:\n");
+	print_bytes(request_wire, 22);
 
-	print_bytes(wire, wirelen);
+	int request_wirelen = create_dns_query(qname, TYPE, request_wire);
+
+	print_bytes(request_wire, request_wirelen);
+
+	unsigned char response_wire[MAX_WIRE_LENGTH];
+
+	printf("Response wire:\n");
+	print_bytes(response_wire, 200);
+
+	int response_wirelen = send_recv_message(request_wire, request_wirelen, response_wire, server, atoi(port));
+
+	print_bytes(response_wire, response_wirelen);
+
+	return get_answer_address(qname, TYPE, response_wire);
 }
 
 int main(int argc, char *argv[])
