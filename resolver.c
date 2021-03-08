@@ -232,6 +232,56 @@ char *name_ascii_from_wire(unsigned char *wire, int *indexp)
 	 * OUTPUT: a string containing the string representation of the name,
 	 *              allocated on the heap.
 	 */
+
+	char name[MAX_NAME_LENGTH];
+
+	unsigned char name_index = *indexp;
+	printf("name_index: %d\n", name_index);
+	while (wire[name_index] >= 192) //We are still a compressed string, next byte will be a pointer
+	{
+		name_index += 1; //Looking at the pointer
+		name_index = wire[name_index];
+		printf("name_index: %d\n", name_index);
+}
+
+	int string_index = 0;
+
+	while (wire[name_index] > 0)
+	{
+		int num_byte_to_read = wire[name_index];
+		name_index += 1;
+
+		printf("\nNumber of bytes to read: %d\n", num_byte_to_read);
+
+		for (int i = 0; i < num_byte_to_read; i++)
+		{
+			printf("index: %d\n", name_index);
+			printf("char to add: %c\n", wire[name_index]);
+			name[string_index + i] = wire[name_index];
+			name_index += 1;
+			printf("name: %s\n", name);
+		}
+
+		string_index += num_byte_to_read;
+		name[string_index] = '.';
+		string_index += 1;
+	}
+
+	name[string_index - 1] = 0x00; //for the last char of the string it should be 0x00, not '.'
+	printf("Final name: %s\n", name);
+
+	*indexp += 2;
+
+	char *ret = (char *)malloc(strlen(name) + 1);
+
+	//copy string
+	for (int i = 0; i < strlen(name); i++)
+	{
+		ret[i] = name[i];
+	}
+	ret[strlen(name)] = '\0';
+
+	return ret;
 }
 
 dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only)
