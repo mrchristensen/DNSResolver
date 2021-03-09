@@ -23,6 +23,7 @@ const int A = 1;
 const int CNAME = 5;
 const int MAX_WIRE_LENGTH = 2048;
 const int MAX_NAME_LENGTH = 256;
+const int POINTER_BYTE_FLAG = 192;
 const char *PERIOD = ".";
 const dns_rr_type TYPE = 1; //Type or Class: Type 1 = IPv4 address, Class 1 = IN, Internet (these can be hardcoded)
 const dns_flags FLAGS = 0x0001;
@@ -236,68 +237,92 @@ char *name_ascii_from_wire(unsigned char *wire, int *indexp)
 	 * OUTPUT: a string containing the string representation of the name,
 	 *              allocated on the heap.
 	 */
-	printf("name_ascii_from_wire() start\n");
-	printf("initial *indexp: %d\n", *indexp);
-
 	char name[MAX_NAME_LENGTH];
-	int string_index = 0;
+	memset(name, 0, MAX_NAME_LENGTH);
+	// char *name = (char *)malloc(200);
+	int name_index = 0;
 
-	unsigned char name_index = *indexp;
-	// printf("name_index: %d\n", name_index);
-	// while (wire[name_index] >= 192) //We are still a compressed string, next byte will be a pointer
-	// {
-	// 	name_index += 1; //Looking at the pointer
-	// 	name_index = wire[name_index];
-	// 	printf("name_index: %d\n", name_index);
-	// }
-
-	while (wire[name_index] > 0)
+	while (wire[*indexp] != 0)
 	{
-		while (wire[name_index] >= 192) //We are still a compressed string, next byte will be a pointer
+		if (wire[*indexp] >= POINTER_BYTE_FLAG)
 		{
-			name_index += 1; //Looking at the pointer
-			name_index = wire[name_index];
-			printf("name_index: %d\n", name_index);
+			*indexp += 1;
+			unsigned char start_index = wire[*indexp];
+
+			while (wire[start_index])
+			{
+				if (wire[start_index] >= POINTER_BYTE_FLAG)
+				{
+					start_index++;
+					int compression_ptr = (int)wire[start_index];
+					// printf("\ncompression_ptr: %d\n", compression_ptr);
+					char *label = name_ascii_from_wire(wire, &compression_ptr);
+					// printf("label: %s\n", label);
+					int sectionLength = strlen(label);
+					// printf("sectionLength: %d\n", sectionLength);
+
+					//Copy over
+					for (int i = 0; i < sectionLength; i++)
+					{
+						name[name_index++] = label[i];
+					}
+					// printf("\n\nname: %s\n", name);
+					// printf("label: %s\n", label);
+					// printf("free()\n");
+					free(label);
+					// printf("name: %s\n", name);
+					// printf("label: %s\n\n\n", label);
+				}
+				else
+				{
+					char num_byte_to_read = wire[start_index++];
+					// printf("\nNumber of bytes to read: %d\n", num_byte_to_read);
+
+					for (int i = 0; i < num_byte_to_read; i++)
+					{
+						// printf("char to add: %c\n", wire[name_index]);
+						name[name_index++] = wire[start_index++];
+						// printf("name so far: %s\n", name);
+					}
+					name[name_index++] = '.';
+				}
+			}
+			//Once you go to compression then you are done with the name.
+			break;
 		}
-		int num_byte_to_read = wire[name_index];
-		name_index += 1;
+		else
+		{ //This section of the name is not compressed.
+			char num_byte_to_read = wire[(*indexp)++];
+			// printf("\nNumber of bytes to read: %d\n", num_byte_to_read);
 
-		printf("\nNumber of bytes to read: %d\n", num_byte_to_read);
-
-		for (int i = 0; i < num_byte_to_read; i++)
-		{
-			printf("index: %d\n", name_index);
-			// printf("char to add: %c\n", wire[name_index]);
-			name[string_index + i] = wire[name_index];
-			name_index += 1;
-			// printf("name so far: %s\n", name);
+			for (int i = 0; i < num_byte_to_read; i++)
+			{
+				// printf("char to add: %c\n", wire[name_index]);
+				name[name_index++] = wire[(*indexp)++];
+				// printf("name so far: %s\n", name);
+			}
+			name[name_index++] = '.';
 		}
-
-		string_index += num_byte_to_read;
-		name[string_index] = '.';
-		string_index += 1;
-
-		break;
 	}
 
-	name[string_index - 1] = 0x00; //for the last char of the string it should be 0x00, not '.'
-	printf("Final name: %s\n", name);
-
-	*indexp += 2;
-	printf("indexp: %d\n", *indexp);
-	printf("name_index: %d\n", name_index);
+	*indexp += 1;
 
 	char *ret = (char *)malloc(strlen(name) + 1);
+	ret = memset(ret, 0, strlen(name) + 1);
 
 	//copy string
 	for (int i = 0; i < strlen(name); i++)
 	{
 		ret[i] = name[i];
+		// printf("i : %d\n", i);
+		// printf("name[i]: %c\n", name[i]);
 	}
-	ret[strlen(name)] = '\0';
+	// ret[strlen(name)] = '\0';
 
-	printf("Final ret string name: %s\n", name);
-	printf("name_ascii_from_wire() finissssssssssshhhh\n");
+	// printf("Final ret string name: %s\n", name);
+	// printf("name_ascii_from_wire() finissssssssssshhhh\n");
+
+	// free(name);
 
 	return ret;
 }
@@ -321,12 +346,14 @@ dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only)
 	 * OUTPUT: the resource record (struct)
 	 */
 
-	printf("rr_from_wire() start\n");
+	// printf("rr_from_wire() start\n");
 
 	dns_rr rr;
 
 	rr.name = name_ascii_from_wire(wire, indexp);
-	printf("\nname: %s\n", rr.name);
+	free(rr.name);
+	rr.name = "";
+	// printf("\nname: %s\n", rr.name);
 
 	rr.type = wire[*indexp + 1] | wire[*indexp] << 8;
 	*indexp += 2;
@@ -344,7 +371,7 @@ dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only)
 
 	if (rr.type == A)
 	{
-		printf("rr.type == A (or 1, or IPv4)\n");
+		// printf("rr.type == A (or 1, or IPv4)\n");
 		for (int i = 0; i < rr.rdata_len; i++)
 		{
 			data[i] = wire[(*indexp)];
@@ -353,7 +380,8 @@ dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only)
 	}
 	else if (rr.type == CNAME)
 	{
-		printf("rr.type == CNAME (or 5)\n");
+		free(data);
+		// printf("rr.type == CNAME (or 5)\n");
 		data = (unsigned char *)name_ascii_from_wire(wire, indexp);
 		//todo do I need a cast here
 	}
@@ -362,12 +390,28 @@ dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only)
 		fprintf(stderr, "Unknown record type: %d\n", rr.type);
 	}
 
+	//Copy over
 	rr.rdata = data;
+	// for (int i = 0; i < strlen(data); i++)
+	// {
+	// 	rr.rdata[i] = data[i];
+	// 	// printf("i : %d\n", i);
+	// 	// printf("data[i]: %c\n", data[i]);
+	// }
+
+	// printf("\n\ndata: %s\n", data);
+	// printf("rr.rdata: %s\n", rr.rdata);
+	// printf("free()\n");
+	// free(data);
+	// printf("\n\ndata: %s\n", data);
+	// printf("rr.rdata: %s\n", rr.rdata);
+
+	//
 
 	// printf("rr.rdata: %s\n", data);
 
 	//We done here
-	printf("rr_from_wire() end\n");
+	// printf("rr_from_wire() end\n");
 	return rr;
 }
 
@@ -507,57 +551,58 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 	 * reflecting either the name or IP address.  If
 	 */
 
-	printf("get_answer_address() start\n");
+	// printf("get_answer_address() start\n");
 
-	int byteIndex = 0;
+	int byte_index = 0;
 
 	//Skip: identification (+2), flags (+2), and questions (+2) to arrive at number of answer rr
-	byteIndex += 6;
+	byte_index += 6;
 
 	//Get number of answers
-	int answerslen = wire[byteIndex + 1] | wire[byteIndex] << 8;
-	byteIndex += 2;
+	int answerslen = wire[byte_index + 1] | wire[byte_index] << 8;
+	byte_index += 2;
 	// printf("\nNum answers: %d\n", answerslen);
 
 	//Skip: authority rr (+2) and additional rr (+2) - The number of authority and additional RR’s in the wire (these will always be 0 for this lab)
-	byteIndex += 4;
+	byte_index += 4;
 
 	//Skip the question
-	while (wire[byteIndex] != 0x00)
+	while (wire[byte_index] != 0x00)
 	{
-		byteIndex += 1;
+		byte_index += 1;
 	}
-	byteIndex += 1;
+	byte_index += 1;
 
 	//Skip the type
-	byteIndex += 2;
+	byte_index += 2;
 
 	//Skip the class
-	byteIndex += 2;
+	byte_index += 2;
 
+	dns_answer_entry *first_answer_entry = NULL;
 	dns_rr resource_records[answerslen];
+	dns_answer_entry *next_temp_entry = NULL;
 
 	for (int i = 0; i < answerslen; i++)
 	{
-		printf("i = %d\n", i);
-		printf("rr_from_wire() call from resource_records[] pop\n");
-		resource_records[i] = rr_from_wire(wire, &byteIndex, FALSE);
+		// printf("i = %d\n", i);
+		// printf("rr_from_wire() call from resource_records[] pop\n");
+		resource_records[i] = rr_from_wire(wire, &byte_index, FALSE);
 	}
 
-	dns_answer_entry *first_answer_entry = NULL;
-	dns_answer_entry *next_temp_entry = NULL;
-
-	for (int i = 0; i < answerslen; i++) //todo change this
+	for (int i = 0; i < answerslen; i++)
 	{
 
 		if (i == 0)
 		{
 			next_temp_entry = (dns_answer_entry *)malloc(sizeof(dns_answer_entry));
+			memset(next_temp_entry, 0, sizeof(dns_answer_entry));
 			first_answer_entry = next_temp_entry;
 		}
 		else
 		{
 			next_temp_entry->next = (dns_answer_entry *)malloc(sizeof(dns_answer_entry));
+			// printf("next_temp_entry->next: %d\n", next_temp_entry->next);
 			next_temp_entry = next_temp_entry->next;
 
 			next_temp_entry->next = NULL;
@@ -566,16 +611,20 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 		if (resource_records[i].type == A)
 		{
 			next_temp_entry->value = (char *)malloc(INET_ADDRSTRLEN);
+			// printf("next_temp_entry->value: %d\n", next_temp_entry->value);
 			inet_ntop(AF_INET, resource_records[i].rdata, next_temp_entry->value, INET_ADDRSTRLEN);
+			free(resource_records[i].rdata);
 		}
 		else if (resource_records[i].type == CNAME)
-		{ //Name is an alias
+		{
+			//canonicalize_name()
+			// printf("resource_records[i].rdata: %s\n", resource_records[i].rdata);
 			canonicalize_name((char *)resource_records[i].rdata);
 			next_temp_entry->value = (char *)resource_records[i].rdata;
 		}
 	}
 
-	printf("get_answer_address() start\n");
+	// printf("get_answer_address() start\n");
 	return first_answer_entry;
 }
 
@@ -634,21 +683,22 @@ dns_answer_entry *resolve(char *qname, char *server, char *port)
 {
 	unsigned char request_wire[MAX_WIRE_LENGTH];
 
-	printf("Request wire:\n");
-	print_bytes(request_wire, 22);
+	// printf("Request wire:\n");
+	// print_bytes(request_wire, 22);
 
 	int request_wirelen = create_dns_query(qname, TYPE, request_wire);
 
 	// print_bytes(request_wire, request_wirelen);
 
 	unsigned char response_wire[MAX_WIRE_LENGTH];
+	memset(response_wire, 0, MAX_WIRE_LENGTH);
 
 	// print_bytes(response_wire, 200);
 
 	int response_wirelen = send_recv_message(request_wire, request_wirelen, response_wire, server, atoi(port));
 
-	printf("Response wire:\n");
-	print_bytes(response_wire, response_wirelen);
+	// printf("Response wire:\n");
+	// print_bytes(response_wire, response_wirelen);
 
 	return get_answer_address(qname, TYPE, response_wire);
 }
