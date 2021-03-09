@@ -18,7 +18,11 @@ typedef unsigned short dns_questions_count;
 typedef unsigned short dns_flags;
 
 const int TRUE = 1;
+const int FALSE = 0;
+const int A = 1;
+const int CNAME = 5;
 const int MAX_WIRE_LENGTH = 2048;
+const int MAX_NAME_LENGTH = 256;
 const char *PERIOD = ".";
 const dns_rr_type TYPE = 1; //Type or Class: Type 1 = IPv4 address, Class 1 = IN, Internet (these can be hardcoded)
 const dns_flags FLAGS = 0x0001;
@@ -192,7 +196,7 @@ int name_ascii_to_wire(char *name, unsigned char *wire)
 
 	while (label != NULL)
 	{
-		printf("label: %s\n", label);
+		// printf("label: %s\n", label);
 
 		int labellen = strlen(label);
 
@@ -232,22 +236,29 @@ char *name_ascii_from_wire(unsigned char *wire, int *indexp)
 	 * OUTPUT: a string containing the string representation of the name,
 	 *              allocated on the heap.
 	 */
+	printf("name_ascii_from_wire() start\n");
+	printf("initial *indexp: %d\n", *indexp);
 
 	char name[MAX_NAME_LENGTH];
+	int string_index = 0;
 
 	unsigned char name_index = *indexp;
-	printf("name_index: %d\n", name_index);
-	while (wire[name_index] >= 192) //We are still a compressed string, next byte will be a pointer
-	{
-		name_index += 1; //Looking at the pointer
-		name_index = wire[name_index];
-		printf("name_index: %d\n", name_index);
-}
-
-	int string_index = 0;
+	// printf("name_index: %d\n", name_index);
+	// while (wire[name_index] >= 192) //We are still a compressed string, next byte will be a pointer
+	// {
+	// 	name_index += 1; //Looking at the pointer
+	// 	name_index = wire[name_index];
+	// 	printf("name_index: %d\n", name_index);
+	// }
 
 	while (wire[name_index] > 0)
 	{
+		while (wire[name_index] >= 192) //We are still a compressed string, next byte will be a pointer
+		{
+			name_index += 1; //Looking at the pointer
+			name_index = wire[name_index];
+			printf("name_index: %d\n", name_index);
+		}
 		int num_byte_to_read = wire[name_index];
 		name_index += 1;
 
@@ -256,21 +267,25 @@ char *name_ascii_from_wire(unsigned char *wire, int *indexp)
 		for (int i = 0; i < num_byte_to_read; i++)
 		{
 			printf("index: %d\n", name_index);
-			printf("char to add: %c\n", wire[name_index]);
+			// printf("char to add: %c\n", wire[name_index]);
 			name[string_index + i] = wire[name_index];
 			name_index += 1;
-			printf("name: %s\n", name);
+			// printf("name so far: %s\n", name);
 		}
 
 		string_index += num_byte_to_read;
 		name[string_index] = '.';
 		string_index += 1;
+
+		break;
 	}
 
 	name[string_index - 1] = 0x00; //for the last char of the string it should be 0x00, not '.'
 	printf("Final name: %s\n", name);
 
 	*indexp += 2;
+	printf("indexp: %d\n", *indexp);
+	printf("name_index: %d\n", name_index);
 
 	char *ret = (char *)malloc(strlen(name) + 1);
 
@@ -280,6 +295,9 @@ char *name_ascii_from_wire(unsigned char *wire, int *indexp)
 		ret[i] = name[i];
 	}
 	ret[strlen(name)] = '\0';
+
+	printf("Final ret string name: %s\n", name);
+	printf("name_ascii_from_wire() finissssssssssshhhh\n");
 
 	return ret;
 }
@@ -302,6 +320,55 @@ dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only)
 	 *              rdata_len, and rdata are skipped.
 	 * OUTPUT: the resource record (struct)
 	 */
+
+	printf("rr_from_wire() start\n");
+
+	dns_rr rr;
+
+	rr.name = name_ascii_from_wire(wire, indexp);
+	printf("\nname: %s\n", rr.name);
+
+	rr.type = wire[*indexp + 1] | wire[*indexp] << 8;
+	*indexp += 2;
+
+	rr.class = wire[*indexp + 1] | wire[*indexp] << 8;
+	*indexp += 2;
+
+	// rr.ttl = NULL; //Time To Live: Indicates how long this record should stay in the resolver’s cache (you resolver doesn’t have a cache, so don’t worry about this) (skip 4)
+	*indexp += 4;
+
+	rr.rdata_len = wire[*indexp + 1] | wire[*indexp] << 8;
+	*indexp += 2;
+
+	unsigned char *data = (unsigned char *)malloc(rr.rdata_len);
+
+	if (rr.type == A)
+	{
+		printf("rr.type == A (or 1, or IPv4)\n");
+		for (int i = 0; i < rr.rdata_len; i++)
+		{
+			data[i] = wire[(*indexp)];
+			*indexp += 1;
+		}
+	}
+	else if (rr.type == CNAME)
+	{
+		printf("rr.type == CNAME (or 5)\n");
+		data = (unsigned char *)name_ascii_from_wire(wire, indexp);
+		//todo do I need a cast here
+	}
+	else
+	{
+		fprintf(stderr, "Unknown record type: %d\n", rr.type);
+	}
+
+	rr.rdata = data;
+
+	// printf("rr.rdata: %s\n", data);
+
+	//We done here
+	printf("rr_from_wire() end\n");
+	return rr;
 }
 
 int rr_to_wire(dns_rr rr, unsigned char *wire, int query_only)
@@ -439,6 +506,77 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 	 * OUTPUT: a linked list of dns_answer_entrys the value member of each
 	 * reflecting either the name or IP address.  If
 	 */
+
+	printf("get_answer_address() start\n");
+
+	int byteIndex = 0;
+
+	//Skip: identification (+2), flags (+2), and questions (+2) to arrive at number of answer rr
+	byteIndex += 6;
+
+	//Get number of answers
+	int answerslen = wire[byteIndex + 1] | wire[byteIndex] << 8;
+	byteIndex += 2;
+	// printf("\nNum answers: %d\n", answerslen);
+
+	//Skip: authority rr (+2) and additional rr (+2) - The number of authority and additional RR’s in the wire (these will always be 0 for this lab)
+	byteIndex += 4;
+
+	//Skip the question
+	while (wire[byteIndex] != 0x00)
+	{
+		byteIndex += 1;
+	}
+	byteIndex += 1;
+
+	//Skip the type
+	byteIndex += 2;
+
+	//Skip the class
+	byteIndex += 2;
+
+	dns_rr resource_records[answerslen];
+
+	for (int i = 0; i < answerslen; i++)
+	{
+		printf("i = %d\n", i);
+		printf("rr_from_wire() call from resource_records[] pop\n");
+		resource_records[i] = rr_from_wire(wire, &byteIndex, FALSE);
+	}
+
+	dns_answer_entry *first_answer_entry = NULL;
+	dns_answer_entry *next_temp_entry = NULL;
+
+	for (int i = 0; i < answerslen; i++) //todo change this
+	{
+
+		if (i == 0)
+		{
+			next_temp_entry = (dns_answer_entry *)malloc(sizeof(dns_answer_entry));
+			first_answer_entry = next_temp_entry;
+		}
+		else
+		{
+			next_temp_entry->next = (dns_answer_entry *)malloc(sizeof(dns_answer_entry));
+			next_temp_entry = next_temp_entry->next;
+
+			next_temp_entry->next = NULL;
+		}
+
+		if (resource_records[i].type == A)
+		{
+			next_temp_entry->value = (char *)malloc(INET_ADDRSTRLEN);
+			inet_ntop(AF_INET, resource_records[i].rdata, next_temp_entry->value, INET_ADDRSTRLEN);
+		}
+		else if (resource_records[i].type == CNAME)
+		{ //Name is an alias
+			canonicalize_name((char *)resource_records[i].rdata);
+			next_temp_entry->value = (char *)resource_records[i].rdata;
+		}
+	}
+
+	printf("get_answer_address() start\n");
+	return first_answer_entry;
 }
 
 int send_recv_message(unsigned char *request, int requestlen, unsigned char *response, char *server, unsigned short port)
@@ -501,15 +639,15 @@ dns_answer_entry *resolve(char *qname, char *server, char *port)
 
 	int request_wirelen = create_dns_query(qname, TYPE, request_wire);
 
-	print_bytes(request_wire, request_wirelen);
+	// print_bytes(request_wire, request_wirelen);
 
 	unsigned char response_wire[MAX_WIRE_LENGTH];
 
-	printf("Response wire:\n");
-	print_bytes(response_wire, 200);
+	// print_bytes(response_wire, 200);
 
 	int response_wirelen = send_recv_message(request_wire, request_wirelen, response_wire, server, atoi(port));
 
+	printf("Response wire:\n");
 	print_bytes(response_wire, response_wirelen);
 
 	return get_answer_address(qname, TYPE, response_wire);
