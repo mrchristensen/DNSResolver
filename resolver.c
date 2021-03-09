@@ -174,11 +174,6 @@ void canonicalize_name(char *name)
 	}
 }
 
-void increment_wire_and_len()
-{
-	//todo
-}
-
 int name_ascii_to_wire(char *name, unsigned char *wire)
 {
 	/* 
@@ -382,8 +377,7 @@ dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only)
 	{
 		free(data);
 		// printf("rr.type == CNAME (or 5)\n");
-		data = (unsigned char *)name_ascii_from_wire(wire, indexp);
-		//todo do I need a cast here
+		data = name_ascii_from_wire(wire, indexp);
 	}
 	else
 	{
@@ -519,7 +513,6 @@ unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *w
 
 	//Question: the formatted domain name
 	int namelen = name_ascii_to_wire(qname, wire);
-	//todo: do we need to check if len == NULL???
 	wire += namelen;
 	wirelen += namelen;
 
@@ -529,7 +522,6 @@ unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *w
 	rr.type = RR_TYPE;
 
 	int rrlen = rr_to_wire(rr, wire, TYPE);
-	//todo: do we need to check if len == NULL???
 	wire += rrlen;
 	wirelen += rrlen;
 
@@ -652,17 +644,19 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 
 	struct sockaddr_in servaddr;
 	bzero(&servaddr, sizeof(servaddr));
-	servaddr.sin_addr.s_addr = inet_addr(server);
 	servaddr.sin_port = htons(port);
+	servaddr.sin_addr.s_addr = inet_addr(server);
 	servaddr.sin_family = AF_INET;
 
 	if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
 	{
 		fprintf(stderr, "Socket could not connect");
+		// printf("sockfd: %d\n", sockfd);
 		exit(EXIT_FAILURE);
 	}
 
 	int writelen = write(sockfd, request, requestlen);
+	// printf("writelen: %d\n", writelen);
 	if (writelen != requestlen)
 	{
 		fprintf(stderr, "Socket could not write completly");
@@ -670,6 +664,7 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 	}
 
 	int readlen = read(sockfd, response, MAX_WIRE_LENGTH);
+	// printf("readlen: %d\n", readlen);
 	if (readlen < 0)
 	{
 		fprintf(stderr, "Socket could not read");
